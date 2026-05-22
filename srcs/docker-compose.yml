@@ -6,18 +6,8 @@ networks:
 volumes:
   wordpress:
     name: wordpress
-    driver: local
-    driver_opts:
-      device: /home/${USER}/data/wordpress
-      o: bind
-      type: none
   mariadb:
     name: mariadb
-    driver: local
-    driver_opts:
-      device: /home/${USER}/data/mariadb
-      o: bind
-      type: none
 
 secrets:
   db_password:
