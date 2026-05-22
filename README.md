@@ -2,7 +2,7 @@
 
 ## Description
 
-Inception is a system administration project that involves setting up a small infrastructure using Docker and Docker Compose. The stack consists of three services — NGINX (with TLS), WordPress (with php-fpm), and MariaDB — each running in its own container built from a custom Dockerfile based on Alpine Linux 3.20.
+Inception is a system administration project that involves setting up a small infrastructure using Docker and Docker Compose. The stack consists of three services — NGINX (with TLS), WordPress (with php-fpm), and MariaDB — each running in its own container built from a custom Dockerfile based on Alpine Linux 3.21.
 
 - **NGINX**: reverse proxy serving HTTPS on port 443 with a self-signed TLS 1.2/1.3 certificate, forwarding PHP requests to the WordPress container.
 - **WordPress**: runs php-fpm to serve the WordPress application, connected to MariaDB.
@@ -18,11 +18,7 @@ Inception is a system administration project that involves setting up a small in
   ```
   127.0.0.1   msuokas.42.fr
   ```
-- Create the data directories:
-  ```bash
-  mkdir -p /home/msuokas/data/wordpress /home/msuokas/data/mariadb
-  ```
-- Create `srcs/.env` with the required environment variables (see DEV_DOC.md)
+- Create the secret files (see DEV_DOC.md or starting_up.md)
 
 ### Start
 
@@ -45,7 +41,7 @@ make down
 
 ### Docker usage and design choices
 
-Each service runs in its own container built from a custom Dockerfile based on Alpine Linux 3.20. No pre-built images from DockerHub are used — only the base Alpine image is pulled, and everything else is installed and configured manually. The three services communicate over a dedicated Docker network called `inception`. Persistent data is stored in named volumes mounted to the host filesystem.
+Each service runs in its own container built from a custom Dockerfile based on Alpine Linux 3.21. No pre-built images from DockerHub are used — only the base Alpine image is pulled, and everything else is installed and configured manually. The three services communicate over a dedicated Docker network called `inception`. Persistent data is stored in named volumes mounted to the host filesystem.
 
 ### Virtual Machines vs Docker
 
@@ -53,7 +49,7 @@ A virtual machine emulates an entire operating system, including its own kernel,
 
 ### Secrets vs Environment Variables
 
-Environment variables (used via `.env` in this project) are simple key-value pairs injected into the container at runtime. They are convenient but stored in plaintext and visible to any process inside the container. Docker secrets are a more secure alternative — they are stored encrypted in the Docker swarm and mounted as files inside the container, never exposed as environment variables. For this project, environment variables via a local `.env` file (excluded from git) are used as required by the subject.
+Environment variables (used via `.env` in this project) are simple key-value pairs injected into the container at runtime. They are convenient for non-sensitive config like domain names and usernames. Docker secrets are used for passwords — they are mounted as read-only files inside the container at `/run/secrets/<name>` and never exposed as environment variables. The `.env` file is committed to git because it contains no credentials. The `secrets/` directory is gitignored because it contains passwords.
 
 ### Docker Network vs Host Network
 
