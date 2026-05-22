@@ -284,61 +284,42 @@ By default MariaDB only listens on `127.0.0.1` (localhost). Inside Docker, WordP
 
 `query_cache_size` was removed in MariaDB 10.6+. If you include it, MariaDB prints an error and may crash on startup. Always check the MariaDB version's changelog when copying config from older examples.
 
-## The initialization script: script.sh
+## The initialization script: script.sh — line by line
 
-```sh
-#!/bin/sh
-set -e                                      # exit immediately on any error
+**`#!/bin/sh` + `set -e`** — run with sh, exit immediately if anything fails
 
-if [ ! -e /var/lib/mysql/.firstmount ]; then
-    db_pwd=$(cat /run/secrets/db_password)  # read password from secret file
-```
+**`if [ ! -f /var/lib/mysql/.firstmount ]`** — the `.firstmount` flag lives inside the volume. If it doesn't exist, this is first boot. If it does, skip everything and go straight to starting the server. Prevents re-initializing on every restart and destroying data.
 
-**Why the `firstmount` guard?**
+**`if [ -d /var/lib/mysql/mysql ]`** — if the mysql system tables directory exists but `.firstmount` doesn't, a previous run crashed mid-init. Wipe the partial data and start clean.
 
-`/var/lib/mysql` is a volume — it persists across container restarts. Without this guard, `mariadb-install-db` would re-initialize an already-initialized database on every restart, destroying all data. The `.firstmount` flag file lives inside the volume, so it persists with the data.
+**`mariadb-install-db`** — creates the raw database file structure MariaDB needs to operate:
+- `--datadir=/var/lib/mysql` — where to put the files (our volume)
+- `--skip-test-db` — don't create the useless test database
+- `--user=mysql --group=mysql` — files owned by the mysql system user
+- `--auth-root-authentication-method=socket` — root authenticates via Unix socket, no password needed when running as the mysql OS user
+- `2>/dev/null` — suppress the verbose output
 
-```sh
-    mariadb-install-db \
-        --datadir=/var/lib/mysql \
-        --skip-test-db \
-        --user=mysql \
-        --group=mysql \
-        --auth-root-authentication-method=socket \
-        >/dev/null 2>&1
-```
+**`mariadbd --user=mysql --bind-address=127.0.0.1 --log-error=/dev/null &`** — starts a temporary MariaDB daemon in the background, bound only to localhost (not reachable from other containers). We need a running server to execute the setup SQL. `&` puts it in the background so the script continues.
 
-`mariadb-install-db` creates the initial database file structure — the `mysql` system tables that MariaDB needs to track users, permissions, and databases. `--skip-test-db` skips creating the useless `test` database. `--auth-root-authentication-method=socket` means the root user authenticates via Unix socket (no password needed for root when running as the mysql OS user) — this is the Alpine/MariaDB default and avoids the need for a root password.
+**`DAEMON_PID=$!`** — save the background process ID so we can kill it later.
 
-```sh
-    mariadbd --bootstrap --user=mysql --skip-networking << EOF
-CREATE DATABASE IF NOT EXISTS $db_name;
-CREATE USER IF NOT EXISTS '$db_user'@'%' IDENTIFIED BY '$db_pwd';
-GRANT ALL PRIVILEGES ON $db_name.* TO '$db_user'@'%';
-FLUSH PRIVILEGES;
-EOF
-```
+**`while ! mariadb -u root -e "SELECT 1"`** — wait until the daemon is actually ready. Hard limit of 30 attempts (30 seconds), then give up.
 
-**What is `--bootstrap` and why is it the right approach?**
+**`db_pwd=$(cat /run/secrets/db_password)`** — read the password from the Docker secret file mounted at `/run/secrets/`.
 
-`mariadbd --bootstrap` starts MariaDB in a special single-user initialization mode. It reads SQL commands from stdin, executes them, and exits. No TCP port is opened, no background process is created. This is the cleanest way to run initialization SQL without starting a background server.
-
-The alternative (starting `mariadbd &`, waiting, running SQL, killing it) is fragile: you need a sleep or wait loop, and there is a background process in the entrypoint — the evaluator may question this.
-
-The SQL itself:
-- `CREATE DATABASE IF NOT EXISTS` — idempotent, safe to run multiple times
-- `CREATE USER '$db_user'@'%'` — the `%` wildcard allows connections from any host (required because WordPress connects from a different container IP)
+**`mariadb -u root << EOF ... EOF`** — connect to the temporary daemon as root and run the setup SQL:
+- `CREATE DATABASE IF NOT EXISTS` — create the WordPress database, safe to run multiple times
+- `CREATE USER '$db_user'@'%'` — `%` allows connections from any host (WordPress is a different container with a different IP)
 - `GRANT ALL PRIVILEGES ON $db_name.*` — WordPress needs full access to its own database
-- `FLUSH PRIVILEGES` — makes the grants take effect immediately
+- `FLUSH PRIVILEGES` — make the grants take effect immediately
 
-```sh
-    touch /var/lib/mysql/.firstmount       # set the flag so this block never runs again
-fi
+**`kill $DAEMON_PID`** — shut down the temporary daemon, setup is done.
 
-exec mariadbd --user=mysql                 # start the real server as PID 1
-```
+**`wait $DAEMON_PID 2>/dev/null || true`** — wait for it to fully exit. `|| true` prevents `set -e` from triggering since a killed process exits non-zero.
 
-`exec mariadbd` replaces the shell with the MariaDB daemon as PID 1. It receives signals directly from Docker and shuts down cleanly.
+**`touch /var/lib/mysql/.firstmount`** — mark initialization complete inside the volume so it persists across restarts.
+
+**`exec mariadbd --user=mysql`** — start the real MariaDB daemon as PID 1. Reads config from `/etc/my.cnf.d/50-server.cnf`, listens on all interfaces on port 3306, receives Docker signals directly.
 
 ### Why log into MariaDB during evaluation
 
@@ -382,102 +363,81 @@ CMD ["/usr/local/bin/script.sh"]
 
 The SSL directory is created at build time so the script doesn't need to — and the directory is guaranteed to exist before openssl tries to write certificates there.
 
-## The entrypoint script: script.sh
+## nginx.conf — line by line
 
-```sh
-#!/bin/sh
-set -e
+`nginx.conf` is the global config. It sets process-level settings and tells nginx where to find site configs:
 
-if [ ! -e /etc/.firstrun ]; then
-```
+- `worker_processes auto` — one worker process per CPU core
+- `worker_connections 1024` — each worker handles up to 1024 simultaneous connections
+- `include /etc/nginx/mime.types` — know what Content-Type header to send for .jpg, .css, .js etc.
+- `default_type application/octet-stream` — fallback type for unknown file extensions
+- `sendfile on` — use kernel-level file sending, faster than read+write
+- `keepalive_timeout 65` — keep connections open 65 seconds for reuse
+- `include /etc/nginx/http.d/*.conf` — load all site configs from this folder (where our script writes `default.conf`)
 
-The `firstrun` guard: NGINX stores the SSL certificate in the container's filesystem (not a volume), so on a fresh container it would regenerate. But if you mount a config volume, the guard prevents double-generation. It also means the domain name is baked in once.
+## The entrypoint script: script.sh — line by line
 
-```sh
-    openssl req -x509 -days 365 -newkey rsa:2048 -nodes \
-        -out /etc/nginx/ssl/cert.crt \
-        -keyout /etc/nginx/ssl/cert.key \
-        -subj "/CN=$DOMAIN_NAME" \
-        >/dev/null 2>&1
-```
+**`#!/bin/sh` + `set -e`** — run with sh, exit immediately if anything fails
 
-Generates a **self-signed certificate**:
-- `-x509` — self-signed (no Certificate Authority)
+**`if [ ! -e /etc/.firstrun ]`** — only generate the cert and write the config once. If the container restarts, skip this block. The cert stays on the container filesystem between restarts.
+
+**openssl block** — generates a self-signed SSL certificate:
+- `-x509` — self-signed, no Certificate Authority needed
 - `-days 365` — valid for one year
 - `-newkey rsa:2048` — generate a new 2048-bit RSA key pair
-- `-nodes` — no passphrase on the private key (needed because nginx reads it unattended at startup)
-- `CN=$DOMAIN_NAME` — Common Name matches the domain (e.g., `msuokas.42.fr`)
+- `-nodes` — no password on the private key (nginx reads it unattended at startup)
+- `-subj "/CN=$DOMAIN_NAME"` — the cert is issued for your domain
+- `>/dev/null 2>&1` — suppress openssl's noisy output
 
-```sh
-    chmod 600 /etc/nginx/ssl/cert.key    # private key: owner read only
-    chmod 644 /etc/nginx/ssl/cert.crt    # certificate: readable by all
-```
+**`chmod 600 cert.key`** — private key readable only by owner. If an attacker gets this, they can decrypt all HTTPS traffic.
 
-Security: the private key must never be world-readable. If an attacker gets the private key, they can decrypt all HTTPS traffic.
+**`chmod 644 cert.crt`** — certificate readable by anyone, nginx needs to send it to browsers.
 
-```sh
-    cat > /etc/nginx/http.d/default.conf << EOF
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;                 # IPv4 and IPv6
-    http2 on;
-    server_name $DOMAIN_NAME;
+**`cat > /etc/nginx/http.d/default.conf << EOF`** — write the nginx site config file. Everything until `EOF` goes into the file.
 
-    ssl_certificate /etc/nginx/ssl/cert.crt;
-    ssl_certificate_key /etc/nginx/ssl/cert.key;
-    ssl_protocols TLSv1.2 TLSv1.3;      # subject requirement: ONLY these two
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:...;  # strong cipher list
-```
+**`listen 443 ssl`** — accept HTTPS on port 443 (IPv4)
 
-The cipher list enforces forward secrecy (ECDHE) and modern authenticated encryption (GCM). Older weak ciphers (RC4, DES, CBC-SHA) are excluded.
+**`listen [::]:443 ssl`** — same for IPv6
 
-```sh
-    client_max_body_size 64M;            # allow large uploads (images, themes)
+**`http2 on`** — enable HTTP/2 for better performance (multiplexing, header compression)
 
-    add_header X-Frame-Options "SAMEORIGIN" always;      # prevent clickjacking
-    add_header X-Content-Type-Options "nosniff" always;  # prevent MIME sniffing
-    add_header X-XSS-Protection "1; mode=block" always;  # legacy XSS filter
+**`server_name $DOMAIN_NAME`** — this server block handles requests for your domain
 
-    root /var/www/html;                  # WordPress files are mounted here
-    index index.php index.html index.htm;
+**`ssl_certificate` / `ssl_certificate_key`** — point to the cert and key we just generated
 
-    location / {
-        try_files \$uri \$uri/ /index.php?\$args;
-    }
-```
+**`ssl_protocols TLSv1.2 TLSv1.3`** — only these two. Nothing older (TLS 1.0, 1.1, SSL) is accepted. Subject requirement.
 
-`try_files` is essential for WordPress permalinks. When you visit `/about/`, NGINX first checks if `/about/` is a real file, then a real directory, then falls back to `index.php?args=about/` — which is how WordPress's router handles URLs.
+**`ssl_ciphers ...`** — the list of allowed encryption algorithms. All use ECDHE (forward secrecy) and GCM (authenticated encryption). Weak ciphers like RC4 and DES are not listed so they're rejected.
 
-```sh
-    location ~ [^/]\.php(/|$) {
-        try_files \$fastcgi_script_name =404;   # security: 404 if PHP file missing
-        fastcgi_pass wordpress:9000;             # send to WordPress container
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-        fastcgi_param PATH_INFO \$fastcgi_path_info;
-        fastcgi_split_path_info ^(.+\.php)(/.*)$;
-        include fastcgi_params;
-    }
+**`client_max_body_size 64M`** — allow file uploads up to 64MB (WordPress media uploads)
 
-    location ~ /\.ht {
-        deny all;                        # block access to .htaccess files
-    }
-}
-EOF
-    touch /etc/.firstrun
-fi
+**`add_header X-Frame-Options "SAMEORIGIN"`** — prevents your site from being embedded in iframes on other domains (clickjacking protection)
 
-nginx -t                                 # test config syntax before starting
-exec nginx -g 'daemon off;'             # run nginx in foreground as PID 1
-```
+**`add_header X-Content-Type-Options "nosniff"`** — browser must respect the declared content type, not guess it
 
-### Why `nginx -g 'daemon off;'`?
+**`add_header X-XSS-Protection "1; mode=block"`** — legacy XSS filter in older browsers
 
-By default, nginx forks into the background and the foreground process exits. In a container, when PID 1 exits, the container stops. `daemon off;` keeps nginx in the foreground.
+**`root /var/www/html`** — WordPress files live here (shared volume with wordpress container)
 
-### Why `fastcgi_pass wordpress:9000` works
+**`index index.php index.html`** — try these files when a directory is requested
 
-Docker's built-in DNS resolves container names within the same network. Because both `nginx` and `wordpress` are on the `inception` network, `nginx` can reach `wordpress` by hostname. Port 9000 is php-fpm's listening port.
+**`location /`** — handles all requests:
+- `try_files $uri $uri/ /index.php?$args` — look for the file, then the directory, then pass to WordPress's router via `index.php`. Essential for WordPress permalinks like `/about/`.
+
+**`location ~ [^/]\.php`** — handles PHP file requests:
+- `try_files $fastcgi_script_name =404` — return 404 if the PHP file doesn't exist (prevents executing non-existent scripts)
+- `fastcgi_pass wordpress:9000` — forward to the wordpress container's php-fpm. Docker DNS resolves `wordpress` to the container's IP.
+- `fastcgi_param SCRIPT_FILENAME` — tells php-fpm the full path of the PHP file to execute
+- `fastcgi_split_path_info` — splits URL into script name and extra path info
+- `include fastcgi_params` — standard FastCGI variables: request method, query string, remote addr etc.
+
+**`location ~ /\.ht`** — block all requests for `.htaccess` files (Apache config files that should never be public)
+
+**`touch /etc/.firstrun`** — mark setup done, skip this block on next restart
+
+**`nginx -t`** — validate the config syntax before starting. If there's a typo in `default.conf`, fail here with a clear error instead of silently crashing.
+
+**`exec nginx -g 'daemon off;'`** — start nginx in the foreground as PID 1. Without `daemon off`, nginx forks to the background and the foreground process exits — which stops the container.
 
 ### What the evaluator checks for NGINX
 
@@ -551,88 +511,59 @@ Alpine Linux does not have a `www-data` user by default (that is a Debian/Ubuntu
 
 Copying at build time is cleaner: the final config is in version control, visible and auditable. Editing with `sed` in the entrypoint script means the "real" config is hidden in string manipulation.
 
-## The installation script: script.sh
+## www.conf — line by line
 
-```sh
-#!/bin/sh
-set -e
+`www.conf` configures the php-fpm worker pool:
 
-if [ ! -e .firstmount ]; then
-    db_pwd=$(cat /run/secrets/db_password)
-    wp_admin_pwd=$(cat /run/secrets/wp_admin_password)
-    wp_user_pwd=$(cat /run/secrets/wp_user_password)
-```
+- `[www]` — name of this pool
+- `user = nobody` / `group = nobody` — run PHP workers as the unprivileged `nobody` user. Alpine doesn't have `www-data` (that's Debian). An unprivileged user can't write to system files if PHP is compromised.
+- `listen = 9000` — listen on TCP port 9000. nginx connects here via FastCGI.
+- `pm = dynamic` — dynamically scale workers based on load
+- `pm.max_children = 5` — never run more than 5 PHP processes simultaneously
+- `pm.start_servers = 2` — start with 2 workers
+- `pm.min_spare_servers = 1` — always keep at least 1 idle worker ready
+- `pm.max_spare_servers = 3` — kill idle workers above 3 to save memory
 
-Reading all passwords from secret files at the very start. They are stored in shell variables for use below — they are never written to any file or logged.
+## The installation script: script.sh — line by line
 
-```sh
-    mariadb-admin ping --protocol=tcp --host=mariadb \
-        -u "$db_user" --password="$db_pwd" --wait >/dev/null 2>&1
-```
+**`#!/bin/sh` + `set -e`** — run with sh, exit immediately if anything fails
 
-**Race condition prevention.** Docker's `depends_on` only waits for the container to START, not for the service inside it to be ready. MariaDB takes a few seconds to initialize after the container starts. Without this wait, WordPress would try to connect to MariaDB before it is ready and fail. `mariadb-admin ping --wait` keeps retrying until MariaDB accepts connections.
+**`WORKDIR=/var/www/html`** — the shared volume path. Used throughout instead of hardcoding it everywhere.
 
-```sh
-    if [ ! -f wp-config.php ]; then
-        wp core download --allow-root
-```
+**`if [ ! -f "$WORKDIR/.firstmount" ]`** — skip the whole install if already done. `.firstmount` lives inside the volume so it persists across restarts.
 
-WP-CLI downloads WordPress core files into `/var/www/html` (the `WORKDIR`). `--allow-root` is needed because the script runs as root inside the container.
+**`db_pwd=$(cat /run/secrets/db_password)` etc.** — read all three passwords from Docker secret files at the start. Never written to any file or logged.
 
-```sh
-        wp config create --allow-root \
-            --dbhost=mariadb \
-            --dbuser="$db_user" \
-            --dbpass="$db_pwd" \
-            --dbname="$db_name"
-```
+**`while ! mariadb-admin ping --protocol=tcp --host=mariadb`** — wait until MariaDB is actually ready. `depends_on` in docker-compose only waits for the container to start, not for MariaDB to finish initializing inside it. Without this, WordPress would fail to connect.
+- `--protocol=tcp` — force TCP (MariaDB is in a different container, no Unix socket)
+- `--host=mariadb` — Docker DNS resolves this to the MariaDB container's IP
+- `--silent` — no output on failure, just retry
+- Hard limit of 30 attempts (30 seconds), then give up
 
-Creates `wp-config.php` — WordPress's main configuration file. `dbhost=mariadb` uses the container name, which Docker DNS resolves to the MariaDB container's IP on the inception network.
+**`if [ ! -f "$WORKDIR/wp-config.php" ]`** — inner guard. If `wp-config.php` exists, WordPress was already downloaded. Skip straight to php-fpm.
 
-```sh
-        wp core install --allow-root \
-            --skip-email \
-            --url="$DOMAIN_NAME" \
-            --title="$WP_TITLE" \
-            --admin_user="$WP_ADMIN_USR" \
-            --admin_password="$wp_admin_pwd" \
-            --admin_email="$WP_ADMIN_EMAIL"
-```
+**`wp core download --allow-root --path="$WORKDIR"`** — download WordPress core files (~60 MB) into `/var/www/html`. `--allow-root` because the script runs as root. `|| exit 1` makes failures explicit even with `set -e`.
 
-Installs WordPress: creates all database tables, creates the admin user, sets the site URL. `--skip-email` skips sending a welcome email. After this command, WordPress is fully installed — no web installer needed.
+**`wp config create --dbhost=mariadb`** — generates `wp-config.php` with database connection details. Uses `mariadb` as host — Docker DNS resolves it to the MariaDB container's IP on the inception network.
 
-The admin username must NOT contain "admin", "Admin", "administrator", etc. (evalsheet requirement). Using `kalakukko55` passes this check.
+**`wp core install`** — creates all WordPress database tables and the admin user:
+- `--skip-email` — don't try to send a welcome email
+- `--url="$DOMAIN_NAME"` — the site URL, must match your domain
+- `--admin_user="$WP_ADMIN_USR"` — must NOT contain "admin" (evalsheet requirement). Ours is `kalakukko55`.
 
-```sh
-        if ! wp user get "$WP_USR" --allow-root >/dev/null 2>&1; then
-            wp user create "$WP_USR" "$WP_EMAIL" \
-                --role=author --user_pass="$wp_user_pwd" --allow-root
-        fi
-```
+**`if ! wp user get "$WP_USR"`** — check if the second user already exists before creating. Makes it safe to run twice.
 
-Creates the second (non-admin) user. The `if` guard checks if the user already exists to make the operation idempotent. Role `author` can write posts and comments but cannot access admin settings.
+**`wp user create "$WP_USR" --role=author`** — creates the non-admin user. `author` role can write posts but can't touch admin settings. Evalsheet requires exactly two users: one admin, one non-admin.
 
-The evalsheet requires two users: one admin (the one above) and one non-admin. Both must exist in the database.
+**`wp theme install astra --activate || true`** — install the Astra theme. `|| true` means a network failure won't abort the whole install.
 
-```sh
-        wp theme install astra --activate --allow-root   # install a theme
-        wp plugin update --all --allow-root              # update all plugins
-    else
-        echo "WordPress already installed."
-    fi
+**`wp plugin update --all || true`** — update plugins. Also non-fatal.
 
-    chmod -R o+w /var/www/html/wp-content   # allow web uploads
-    touch .firstmount                        # never re-install
-fi
+**`chmod -R o+w "$WORKDIR/wp-content"`** — allow WordPress to write uploads, cache, and plugin files to the shared volume.
 
-exec /usr/sbin/php-fpm83 -F                 # start php-fpm in foreground as PID 1
-```
+**`touch "$WORKDIR/.firstmount"`** — mark install complete inside the volume. Next restart skips straight to php-fpm.
 
-`-F` flag keeps php-fpm in the foreground (equivalent to `daemon off` for nginx). `exec` makes it PID 1.
-
-### Why WP-CLI instead of the web installer?
-
-The web installer requires manual browser interaction. WP-CLI automates the entire installation from the command line — the container self-configures on first start, no human steps needed. This is the professional approach and what the project expects.
+**`exec /usr/sbin/php-fpm83 -F`** — start php-fpm in the foreground as PID 1. `-F` prevents daemonizing. `exec` replaces the shell so php-fpm receives Docker's signals directly.
 
 ### Verifying WordPress works during evaluation
 
