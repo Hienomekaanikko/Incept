@@ -74,11 +74,11 @@ volumes:
 
 secrets:
   db_password:
-    file: ./secrets/db_password.txt        # read from this file on the host
+    file: ../secrets/db_password.txt       # ../secrets = repo root, relative to srcs/
   wp_admin_password:
-    file: ./secrets/wp_admin_password.txt
+    file: ../secrets/wp_admin_password.txt
   wp_user_password:
-    file: ./secrets/wp_user_password.txt
+    file: ../secrets/wp_user_password.txt
 
 services:
   nginx:
@@ -145,10 +145,10 @@ links:             # FORBIDDEN — old deprecated feature, replaced by networks
 | | Environment Variables (`.env`) | Docker Secrets |
 |---|---|---|
 | **Storage** | Plain text in `.env` file | Plain text in `secrets/*.txt` files |
-| **In git?** | Must be gitignored | Must be gitignored |
+| **In git?** | Committed — contains no passwords | Gitignored — contains passwords |
 | **In container** | Available as `$VAR` | Available as a file at `/run/secrets/<name>` |
-| **Risk if leaked** | Credentials exposed | Credentials exposed |
-| **Subject says** | Use for non-sensitive config | "Strongly recommended" for passwords |
+| **Contains** | Domain, usernames, DB name | Passwords only |
+| **Subject says** | Use for non-sensitive config | Use for credentials |
 
 How secrets appear inside a container:
 ```sh
@@ -188,17 +188,9 @@ SECRETS_DIR = secrets
 
 all: build up                    # default target
 
-build: $(DATA_DIR)/mariadb $(DATA_DIR)/wordpress $(SECRETS_DIR)
+build:
+    mkdir -p $(DATA_DIR)/mariadb $(DATA_DIR)/wordpress $(SECRETS_DIR)
     docker compose -f $(COMPOSE_FILE) build
-
-$(DATA_DIR)/mariadb:             # prerequisite: create dir if missing
-    mkdir -p $(DATA_DIR)/mariadb
-
-$(DATA_DIR)/wordpress:
-    mkdir -p $(DATA_DIR)/wordpress
-
-$(SECRETS_DIR):                  # prerequisite: create secrets dir if missing
-    mkdir -p $(SECRETS_DIR)
 
 up:
     docker compose -f $(COMPOSE_FILE) up -d
@@ -253,7 +245,8 @@ RUN apk add --no-cache mariadb mariadb-client && \
 The directories `/run/mysqld` (for the socket file) and `/var/log/mysql` (for logs) must exist before MariaDB starts. Doing it in the Dockerfile means it happens once during image build, not on every container start. The `chown mysql:mysql` is required because MariaDB runs as the `mysql` user — if it can't write to its socket directory, it crashes.
 
 ```dockerfile
-COPY ./tools/50-server.cnf /etc/my.cnf.d/   # database configuration
+RUN sed -i '/skip.networking/d' /etc/my.cnf.d/mariadb-server.cnf  # Alpine default disables TCP
+COPY ./conf/50-server.cnf /etc/my.cnf.d/
 COPY ./tools/script.sh /
 RUN chmod +x /script.sh
 CMD ["/script.sh"]
@@ -579,7 +572,7 @@ docker volume inspect wordpress
 
 # Verify two users in the database
 docker exec -it mariadb mariadb -u awesomeuser -p \
-  -e "SELECT user_login, user_email, user_registered FROM wp_users;"
+  -e "SELECT user_login, user_email, user_registered FROM awesomedb.wp_users;"
 
 # Check WordPress files are on the host
 ls /home/msuokas/data/wordpress/
@@ -609,7 +602,9 @@ Docker reads `docker-compose.yml`. `depends_on` means mariadb starts first, then
 
 `script.sh` runs. On first boot:
 - `mariadb-install-db` creates the raw data directory structure
-- `mariadbd --bootstrap` reads SQL from stdin: creates `awesomedb`, creates `awesomeuser`, grants permissions — reads password from `/run/secrets/db_password`
+- a temporary `mariadbd` starts in the background to accept the setup SQL
+- creates `awesomedb`, creates `awesomeuser`, grants permissions — password from `/run/secrets/db_password`
+- temporary daemon is killed, `exec mariadbd` takes over as PID 1
 - touches `.firstmount` so this never runs again
 - `exec mariadbd --user=mysql` becomes PID 1, listens on port 3306 inside the `inception` network
 
