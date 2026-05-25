@@ -17,7 +17,7 @@ if [ ! -f /var/lib/mysql/.firstmount ]; then
         --auth-root-authentication-method=socket \
         2>/dev/null
 
-    mariadbd --user=mysql --bind-address=127.0.0.1 --log-error=/dev/null &
+    mariadbd --user=mysql --bind-address=127.0.0.1 --log-error=/var/log/mysql/error.log &
     DAEMON_PID=$!
 
     echo "Waiting for daemon..."
