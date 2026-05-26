@@ -8,7 +8,7 @@ Docker Engine 20.10+, Docker Compose v2, Make. Port 443 free on the host.
 
 ```bash
 # 1. Add your domain to /etc/hosts
-echo "127.0.0.1  msuokas.42.fr" | sudo tee -a /etc/hosts
+echo "127.0.0.1  msuokas.hive.fi" | sudo tee -a /etc/hosts
 
 # 2. Create the secret files (passwords only, no quotes)
 mkdir -p secrets

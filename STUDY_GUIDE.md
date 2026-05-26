@@ -436,13 +436,13 @@ The SSL directory is created at build time so the script doesn't need to — and
 
 ```bash
 # TLS version
-openssl s_client -connect msuokas.42.fr:443 2>/dev/null | grep "Protocol"
+openssl s_client -connect msuokas.hive.fi:443 2>/dev/null | grep "Protocol"
 
 # Can't connect on HTTP
-curl http://msuokas.42.fr     # should fail
+curl http://msuokas.hive.fi     # should fail
 
 # Can connect on HTTPS
-curl -k https://msuokas.42.fr  # should return HTML
+curl -k https://msuokas.hive.fi  # should return HTML
 ```
 
 ---

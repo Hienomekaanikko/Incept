@@ -16,7 +16,7 @@ Inception is a system administration project that involves setting up a small in
 - Port 443 available on the host
 - Add the domain to `/etc/hosts`:
   ```
-  127.0.0.1   msuokas.42.fr
+  127.0.0.1   msuokas.hive.fi
   ```
 - Create the secret files (see DEV_DOC.md or starting_up.md)
 
@@ -34,8 +34,8 @@ make down
 
 ### Access
 
-- Website: `https://msuokas.42.fr`
-- Admin panel: `https://msuokas.42.fr/wp-admin`
+- Website: `https://msuokas.hive.fi`
+- Admin panel: `https://msuokas.hive.fi/wp-admin`
 
 ## Project description
 

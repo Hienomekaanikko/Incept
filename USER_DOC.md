@@ -2,11 +2,11 @@
 
 ## Opening it
 
-Go to `https://msuokas.42.fr` in your browser. You'll get a certificate warning because the SSL cert is self-signed — click through it (Advanced → Proceed).
+Go to `https://msuokas.hive.fi` in your browser. You'll get a certificate warning because the SSL cert is self-signed — click through it (Advanced → Proceed).
 
 ## WordPress admin
 
-`https://msuokas.42.fr/wp-admin`
+`https://msuokas.hive.fi/wp-admin`
 
 Log in with the admin credentials you put in `secrets/wp_admin_password.txt`. The admin username is `kalakukko55`.
 

@@ -110,15 +110,15 @@ docker network inspect inception
 ## NGINX and TLS
 
 ```bash
-curl -k https://msuokas.42.fr          # returns WordPress HTML
-curl http://msuokas.42.fr              # connection refused — port 80 not exposed
+curl -k https://msuokas.hive.fi          # returns WordPress HTML
+curl http://msuokas.hive.fi              # connection refused — port 80 not exposed
 ```
 
 **Verify TLS versions:**
 ```bash
-openssl s_client -connect msuokas.42.fr:443 -tls1_2 2>/dev/null | grep "Cipher"
-openssl s_client -connect msuokas.42.fr:443 -tls1_3 2>/dev/null | grep "Cipher"
-openssl s_client -connect msuokas.42.fr:443 -tls1_1 2>/dev/null | grep "Cipher"  # should fail
+openssl s_client -connect msuokas.hive.fi:443 -tls1_2 2>/dev/null | grep "Cipher"
+openssl s_client -connect msuokas.hive.fi:443 -tls1_3 2>/dev/null | grep "Cipher"
+openssl s_client -connect msuokas.hive.fi:443 -tls1_1 2>/dev/null | grep "Cipher"  # should fail
 ```
 
 **Say:** "nginx enforces `ssl_protocols TLSv1.2 TLSv1.3` — nothing older is accepted. The self-signed cert is generated at container startup with openssl. nginx is the only entry point; it proxies PHP requests to the WordPress container on port 9000 via FastCGI."
@@ -127,10 +127,10 @@ openssl s_client -connect msuokas.42.fr:443 -tls1_1 2>/dev/null | grep "Cipher" 
 
 ## WordPress
 
-Open `https://msuokas.42.fr` in the browser — site loads.
+Open `https://msuokas.hive.fi` in the browser — site loads.
 
 **Log in as admin:**
-- URL: `https://msuokas.42.fr/wp-admin`
+- URL: `https://msuokas.hive.fi/wp-admin`
 - Username: `kalakukko55` (no "admin" in the name)
 - Password: whatever you put in `secrets/wp_admin_password.txt`
 
@@ -185,7 +185,7 @@ grep -i nginx srcs/requirements/mariadb/Dockerfile || echo "not found"
 ## Persistence
 
 1. `make down` then `make up` (or reboot the VM)
-2. Open `https://msuokas.42.fr` — all content still there
+2. Open `https://msuokas.hive.fi` — all content still there
 
 **Say:** "Both volumes are bind-mounted to `/home/msuokas/data/` on the host. The data lives on the host filesystem — destroying containers doesn't affect it. WordPress also has a `.firstmount` guard so the installer never re-runs on restart."
 
@@ -216,7 +216,7 @@ ports:
 Then:
 ```bash
 docker compose -f srcs/docker-compose.yml up -d
-curl -k https://msuokas.42.fr:4343
+curl -k https://msuokas.hive.fi:4343
 ```
 
 Change it back when done.

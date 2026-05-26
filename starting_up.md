@@ -21,7 +21,7 @@ cd inception
 ## 3. Add the domain to /etc/hosts
 
 ```bash
-echo "127.0.0.1 msuokas.42.fr" | sudo tee -a /etc/hosts
+echo "127.0.0.1 msuokas.hive.fi" | sudo tee -a /etc/hosts
 ```
 
 ## 4. Create the secret files
@@ -41,7 +41,7 @@ echo "<wp-user-password>"  > secrets/wp_user_password.txt
 make
 ```
 
-Then open `https://msuokas.42.fr` in the browser. First boot takes a few minutes while WordPress downloads and installs — watch progress with `docker logs -f wordpress`.
+Then open `https://msuokas.hive.fi` in the browser. First boot takes a few minutes while WordPress downloads and installs — watch progress with `docker logs -f wordpress`.
 
 ---
 
