@@ -10,7 +10,7 @@ build:
 	mkdir -p $(DATA_DIR)/mariadb $(DATA_DIR)/wordpress $(SECRETS_DIR)
 	docker compose -f $(COMPOSE_FILE) build
 
-up:
+up:	build
 	docker compose -f $(COMPOSE_FILE) up -d
 
 down:

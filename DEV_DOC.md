@@ -1,14 +1,13 @@
-# Dev notes — Inception
+# Inception Dev Doc
 
 ## What you need
 
 Docker Engine 20.10+, Docker Compose v2, Make. Port 443 free on the host.
 
-## First-time setup on the school VM
+## First-time setup
 
-```bash
 # 1. Add your domain to /etc/hosts
-echo "127.0.0.1  msuokas.hive.fi" | sudo tee -a /etc/hosts
+echo "127.0.0.1  msuokas.42.fr" | sudo tee -a /etc/hosts
 
 # 2. Create the secret files (passwords only, no quotes)
 mkdir -p secrets
@@ -17,10 +16,10 @@ echo "your_admin_password" > secrets/wp_admin_password.txt
 echo "your_user_password"  > secrets/wp_user_password.txt
 
 # 3. Build and start
-make
-```
 
-The `.env` is already in the repo (it has no passwords). The `secrets/` directory is gitignored — you create it locally and never commit it.
+make
+
+The `.env` is already in the repo (it has no passwords). The `secrets/` directory is gitignored. You create it locally and never commit it.
 
 ## Make targets
 
@@ -35,7 +34,6 @@ make re       fclean + build + up
 
 ## Useful commands
 
-```bash
 # Live logs
 docker logs -f nginx
 docker logs -f wordpress
@@ -49,17 +47,18 @@ docker exec -it mariadb sh
 # Rebuild one service without touching the others
 docker compose -f srcs/docker-compose.yml build wordpress
 docker compose -f srcs/docker-compose.yml up -d wordpress
-```
+
+# Login to a volume
+docker volume ls -> check volume name
+docker exec -it mariadb mysql -u <db-user> -p 
 
 ## How it fits together
 
-```
 browser → nginx:443 (TLS 1.2/1.3)
               ↓ FastCGI :9000
           wordpress (php-fpm)
               ↓ TCP :3306
           mariadb
-```
 
 nginx is the only container with a published port. WordPress and MariaDB talk over the internal `inception` network only.
 
