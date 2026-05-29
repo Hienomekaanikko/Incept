@@ -37,7 +37,7 @@ Inception is a system administration project that involves setting up a small in
 ### The flow of how everything works
 
 So we have NGINX, WordPress and MariaDB and it all gets build-up to be a one coherent thing via the recipe that is the docker-compose file. After it's 
-all running, user can go to the address https://msuokas.hive.fi. What happens next:
+all running, user can go to the address https://msuokas.42.fr What happens next:
 
 1. The https-request gets sent to nginx through port 443. (The only way to the system). 
 2. NGINX interprets: 'this is a PHP request, i'll send it to FastCGI through port 9000 as i dont know what to do with this'.
